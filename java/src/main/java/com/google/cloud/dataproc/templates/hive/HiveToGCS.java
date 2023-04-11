@@ -32,12 +32,14 @@ public class HiveToGCS implements BaseTemplate {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(HiveToGCS.class);
   private String outputPath;
-  private String warehouseLocation;
   private String hiveInputTable;
   private String hiveInputDb;
   private String outputFormat;
   private String partitionColumn;
   private String gcsSaveMode;
+  private String tempTable;
+  private String tempQuery;
+  private final String sparkLogLevel;
 
   /**
    * Spark job to move data from Hive table to GCS bucket. For detailed list of properties refer
@@ -48,7 +50,6 @@ public class HiveToGCS implements BaseTemplate {
    */
   public HiveToGCS() {
     outputPath = getProperties().getProperty(HIVE_TO_GCS_OUTPUT_PATH_PROP);
-    warehouseLocation = getProperties().getProperty(HIVE_WAREHOUSE_LOCATION_PROP);
     hiveInputTable = getProperties().getProperty(HIVE_INPUT_TABLE_PROP);
     hiveInputDb = getProperties().getProperty(HIVE_INPUT_TABLE_DATABASE_PROP);
     outputFormat =
@@ -56,48 +57,22 @@ public class HiveToGCS implements BaseTemplate {
             .getProperty(HIVE_TO_GCS_OUTPUT_FORMAT_PROP, HIVE_TO_GCS_OUTPUT_FORMAT_DEFAULT);
     partitionColumn = getProperties().getProperty(HIVE_PARTITION_COL);
     gcsSaveMode = getProperties().getProperty(HIVE_GCS_SAVE_MODE);
+    tempTable = getProperties().getProperty(HIVE_GCS_TEMP_TABLE);
+    tempQuery = getProperties().getProperty(HIVE_GCS_TEMP_QUERY);
+    sparkLogLevel = getProperties().getProperty(SPARK_LOG_LEVEL);
   }
 
   @Override
   public void runTemplate() {
 
-    if (StringUtils.isAllBlank(outputPath)
-        || StringUtils.isAllBlank(hiveInputTable)
-        || StringUtils.isAllBlank(hiveInputDb)) {
-      LOGGER.error(
-          "{},{},{} is required parameter. ",
-          HIVE_INPUT_TABLE_PROP,
-          HIVE_INPUT_TABLE_DATABASE_PROP,
-          HIVE_TO_GCS_OUTPUT_PATH_PROP);
-      throw new IllegalArgumentException(
-          "Required parameters for HiveToGCS not passed. "
-              + "Set mandatory parameter for HiveToGCS template "
-              + "in resources/conf/template.properties file.");
-    }
-
-    SparkSession spark = null;
-    LOGGER.info(
-        "Starting Hive to GCS spark job with following parameters:"
-            + "1. {}:{}"
-            + "2. {}:{}"
-            + "3. {}:{}"
-            + "4. {},{}",
-        HIVE_TO_GCS_OUTPUT_PATH_PROP,
-        outputPath,
-        HIVE_WAREHOUSE_LOCATION_PROP,
-        warehouseLocation,
-        HIVE_INPUT_TABLE_PROP,
-        hiveInputTable,
-        HIVE_INPUT_TABLE_DATABASE_PROP,
-        hiveInputDb);
+    validateInput();
 
     // Confiure spark session to read from hive.
-    spark =
-        SparkSession.builder()
-            .appName("Spark HiveToGcs Job")
-            .config(HIVE_WAREHOUSE_LOCATION_PROP, warehouseLocation)
-            .enableHiveSupport()
-            .getOrCreate();
+    SparkSession spark =
+        SparkSession.builder().appName("Spark HiveToGcs Job").enableHiveSupport().getOrCreate();
+
+    // Set log level
+    spark.sparkContext().setLogLevel(sparkLogLevel);
 
     // Read source Hive table.
     Dataset<Row> inputData = spark.table(hiveInputDb + "." + hiveInputTable);
@@ -106,6 +81,11 @@ public class HiveToGCS implements BaseTemplate {
     LOGGER.info("Columns in table:{} are: {}", hiveInputTable, StringUtils.join(cols, ","));
     LOGGER.info("Total row count: {}", inputData.count());
     LOGGER.info("Writing data to outputPath: {}", outputPath);
+
+    if (StringUtils.isNotBlank(tempTable) && StringUtils.isNotBlank(tempQuery)) {
+      inputData.createOrReplaceGlobalTempView(tempTable);
+      inputData = spark.sql(tempQuery);
+    }
 
     DataFrameWriter<Row> writer = inputData.write().format(outputFormat);
 
@@ -121,5 +101,33 @@ public class HiveToGCS implements BaseTemplate {
 
     LOGGER.info("HiveToGcs job completed.");
     spark.stop();
+  }
+
+  public void validateInput() {
+    if (StringUtils.isAllBlank(outputPath)
+        || StringUtils.isAllBlank(hiveInputTable)
+        || StringUtils.isAllBlank(hiveInputDb)) {
+      LOGGER.error(
+          "{},{},{} is required parameter. ",
+          HIVE_INPUT_TABLE_PROP,
+          HIVE_INPUT_TABLE_DATABASE_PROP,
+          HIVE_TO_GCS_OUTPUT_PATH_PROP);
+      throw new IllegalArgumentException(
+          "Required parameters for HiveToGCS not passed. "
+              + "Set mandatory parameter for HiveToGCS template "
+              + "in resources/conf/template.properties file.");
+    }
+
+    LOGGER.info(
+        "Starting Hive to GCS spark job with following parameters:"
+            + "1. {}:{}"
+            + "2. {}:{}"
+            + "3. {}:{}",
+        HIVE_TO_GCS_OUTPUT_PATH_PROP,
+        outputPath,
+        HIVE_INPUT_TABLE_PROP,
+        hiveInputTable,
+        HIVE_INPUT_TABLE_DATABASE_PROP,
+        hiveInputDb);
   }
 }

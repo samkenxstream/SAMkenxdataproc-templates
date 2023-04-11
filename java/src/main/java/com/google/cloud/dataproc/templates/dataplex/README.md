@@ -3,12 +3,14 @@
 This template will incrementally move data from a Dataplex GCS tables to BigQuery.
 It will identify new partitions in Dataplex GCS and load them to BigQuery.
 
+Note: if the Dataplex GCS table has no partitions, the whole table will be read
+from GCS and the target BQ table will be overwritten.
 
 ### General Execution:
 
 Download jar and properties file
 ```
-export GCS_STAGING_LOCATION=gs://bucket/path/to/staging/folder
+export GCS_STAGING_LOCATION=gs://bucket/path/to/staging/folder/
 gsutil -u <billing-project-id> cp gs://dataplex-dataproc-templates-artifacts/dataproc-templates-1.0-SNAPSHOT.jar ${GCS_STAGING_LOCATION}
 gsutil -u <billing-project-id> cp gs://dataplex-dataproc-templates-artifacts/log4j-spark-driver-template.properties ${GCS_STAGING_LOCATION}
 ```
@@ -23,11 +25,11 @@ gcloud dataplex tasks create <task-id> \
     --trigger-type=ON_DEMAND \
     --execution-service-account=<execution service account> \
     --spark-main-class="com.google.cloud.dataproc.templates.main.DataProcTemplate" \
-    --spark-file-uris="${GCS_STAGING_LOCATION}/log4j-spark-driver-template.properties" \
-    --container-image-java-jars="${GCS_STAGING_LOCATION}/dataproc-templates-1.0-SNAPSHOT.jar" \
+    --spark-file-uris="${GCS_STAGING_LOCATION}log4j-spark-driver-template.properties" \
+    --container-image-java-jars="${GCS_STAGING_LOCATION}dataproc-templates-1.0-SNAPSHOT.jar" \
     --execution-args=^::^TASK_ARGS="--template=DATAPLEXGCSTOBQ,\
         --templateProperty=project.id=<project-id>,\
-        --templateProperty=<dataset_name>,\
+        --templateProperty=dataplex.gcs.bq.target.dataset=<dataset_name>,\
         --templateProperty=gcs.bigquery.temp.bucket.name=<temp-bucket-name>,\
         --templateProperty=dataplex.gcs.bq.save.mode=append,\
         --templateProperty=dataplex.gcs.bq.incremental.partition.copy=yes,\
@@ -58,6 +60,15 @@ Defaults to `errorifexists` \
 copy new partitions only or all the partitions. If set to `no` existing
 partitions, if found will be overwritten. Can be any of the following `yes`,
 `no`. Defaults to `yes`
+
+`dataplex.gcs.bq.target.asset` specifies the Dataplex BQ Asset where the data will be written to. In other words this 
+is an alternative mechanism to specify target dataset. If `dataplex.gcs.bq.target.dataset` and 
+`dataplex.gcs.bq.target.asset` are both set, then `dataplex.gcs.bq.target.asset` will take precedence.
+
+`dataplex.gcs.bq.target.entity` specifies tha Dataplex BQ Entity where the data will be written to. In other words this 
+is an alternative mechanism to specify the target BQ table. The `dataplex.gcs.bq.target.entity` will take precedence 
+over any other property or argument specifying target output of the data.
+
 
 ### Arguments
 `--dataplexEntity` Dataplex GCS table to load in BigQuery \

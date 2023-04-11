@@ -22,7 +22,6 @@ import com.google.cloud.dataproc.templates.util.PropertyUtil;
 import java.util.stream.Stream;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.Logger;
@@ -38,7 +37,6 @@ class HiveToBigQueryTest {
     SparkSession spark = SparkSession.builder().master("local").getOrCreate();
   }
 
-  @Disabled
   @ParameterizedTest
   @MethodSource("propertyKeys")
   void runTemplateWithValidParameters(String propKey) {
@@ -48,10 +46,13 @@ class HiveToBigQueryTest {
     PropertyUtil.getProperties().setProperty(HIVE_TO_BQ_TEMP_GCS_BUCKET, "gs://test-bucket");
     PropertyUtil.getProperties().setProperty(HIVE_TO_BQ_SQL, "select * from default.employee");
     PropertyUtil.getProperties().setProperty(HIVE_TO_BQ_APPEND_MODE, "Append");
+    PropertyUtil.getProperties().setProperty(HIVE_TO_BQ_TEMP_TABLE, "temp");
+    PropertyUtil.getProperties()
+        .setProperty(HIVE_TO_BQ_TEMP_QUERY, "select * from global_temp.temp");
     PropertyUtil.getProperties().setProperty(propKey, "someValue");
     hiveToBigQueryTest = new HiveToBigQuery();
 
-    assertDoesNotThrow(hiveToBigQueryTest::runTemplate);
+    assertDoesNotThrow(hiveToBigQueryTest::validateInput);
   }
 
   @ParameterizedTest
@@ -75,6 +76,8 @@ class HiveToBigQueryTest {
         HIVE_TO_BQ_BIGQUERY_LOCATION,
         HIVE_TO_BQ_TEMP_GCS_BUCKET,
         HIVE_TO_BQ_SQL,
-        HIVE_TO_BQ_APPEND_MODE);
+        HIVE_TO_BQ_APPEND_MODE,
+        HIVE_TO_BQ_TEMP_TABLE,
+        HIVE_TO_BQ_TEMP_QUERY);
   }
 }

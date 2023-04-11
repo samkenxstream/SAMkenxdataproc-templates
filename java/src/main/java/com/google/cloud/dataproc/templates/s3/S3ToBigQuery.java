@@ -18,7 +18,6 @@ package com.google.cloud.dataproc.templates.s3;
 import static com.google.cloud.dataproc.templates.util.TemplateConstants.*;
 
 import com.google.cloud.dataproc.templates.BaseTemplate;
-import java.util.Objects;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -39,6 +38,8 @@ public class S3ToBigQuery implements BaseTemplate {
   private String bigQueryTable;
   private String bqTempBucket;
   private String inputFileFormat;
+  private final String sparkLogLevel;
+  private final String outputMode;
 
   public S3ToBigQuery() {
 
@@ -50,10 +51,69 @@ public class S3ToBigQuery implements BaseTemplate {
     bigQueryTable = getProperties().getProperty(S3_BQ_OUTPUT_TABLE_NAME);
     bqTempBucket = getProperties().getProperty(S3_BQ_LD_TEMP_BUCKET_NAME);
     inputFileFormat = getProperties().getProperty(S3_BQ_INPUT_FORMAT);
+    sparkLogLevel = getProperties().getProperty(SPARK_LOG_LEVEL);
+    outputMode = getProperties().getProperty(S3_BQ_OUTPUT_MODE);
   }
 
   @Override
   public void runTemplate() {
+
+    validateInput();
+
+    SparkSession spark = SparkSession.builder().appName("S3 to Bigquery load").getOrCreate();
+
+    // Set log level
+    spark.sparkContext().setLogLevel(sparkLogLevel);
+
+    spark.sparkContext().hadoopConfiguration().set(S3_BQ_ACCESS_KEY_CONFIG_NAME, accessKey);
+    spark.sparkContext().hadoopConfiguration().set(S3_BQ_SECRET_KEY_CONFIG_NAME, accessSecret);
+    spark
+        .sparkContext()
+        .hadoopConfiguration()
+        .set(S3_BQ_ENDPOINT_CONFIG_NAME, S3_BQ_ENDPOINT_CONFIG_VALUE);
+
+    Dataset<Row> inputData = null;
+
+    switch (inputFileFormat) {
+      case GCS_BQ_CSV_FORMAT:
+        inputData =
+            spark
+                .read()
+                .format(GCS_BQ_CSV_FORMAT)
+                .option(S3_BQ_HEADER, true)
+                .option(S3_BQ_INFER_SCHEMA, true)
+                .load(inputFileLocation);
+        break;
+      case S3_BQ_AVRO_FORMAT:
+        inputData = spark.read().format(GCS_BQ_AVRO_EXTD_FORMAT).load(inputFileLocation);
+        break;
+      case S3_BQ_PRQT_FORMAT:
+        inputData = spark.read().parquet(inputFileLocation);
+        break;
+      case S3_BQ_JSON_FORMAT:
+        inputData =
+            spark
+                .read()
+                .format(S3_BQ_JSON_FORMAT)
+                .option(S3_BQ_INFER_SCHEMA, true)
+                .load(inputFileLocation);
+        break;
+      default:
+        throw new IllegalArgumentException(
+            "Currenlty avro, parquet, json and csv are the only supported formats");
+    }
+
+    inputData
+        .write()
+        .format(S3_BQ_OUTPUT_FORMAT)
+        .option(S3_BQ_HEADER, true)
+        .option(S3_BQ_OUTPUT, bigQueryDataset + "." + bigQueryTable)
+        .option(S3_BQ_TEMP_BUCKET, bqTempBucket)
+        .mode(SaveMode.valueOf(outputMode))
+        .save();
+  }
+
+  public void validateInput() {
     if (StringUtils.isAllBlank(projectID)
         || StringUtils.isAllBlank(inputFileLocation)
         || StringUtils.isAllBlank(accessKey)
@@ -78,7 +138,6 @@ public class S3ToBigQuery implements BaseTemplate {
               + "in resources/conf/template.properties file.");
     }
 
-    SparkSession spark = null;
     LOGGER.info(
         "Starting S3 to Bigquery spark job with following parameters:"
             + "1. {}:{}"
@@ -99,62 +158,5 @@ public class S3ToBigQuery implements BaseTemplate {
         bqTempBucket,
         S3_BQ_INPUT_FORMAT,
         inputFileFormat);
-
-    try {
-      spark = SparkSession.builder().appName("S3 to Bigquery load").getOrCreate();
-
-      spark.sparkContext().hadoopConfiguration().set(S3_BQ_ACCESS_KEY_CONFIG_NAME, accessKey);
-      spark.sparkContext().hadoopConfiguration().set(S3_BQ_SECRET_KEY_CONFIG_NAME, accessSecret);
-      spark
-          .sparkContext()
-          .hadoopConfiguration()
-          .set(S3_BQ_ENDPOINT_CONFIG_NAME, S3_BQ_ENDPOINT_CONFIG_VALUE);
-
-      Dataset<Row> inputData = null;
-
-      switch (inputFileFormat) {
-        case GCS_BQ_CSV_FORMAT:
-          inputData =
-              spark
-                  .read()
-                  .format(GCS_BQ_CSV_FORMAT)
-                  .option(S3_BQ_HEADER, true)
-                  .option(S3_BQ_INFER_SCHEMA, true)
-                  .load(inputFileLocation);
-          break;
-        case S3_BQ_AVRO_FORMAT:
-          inputData = spark.read().format(GCS_BQ_AVRO_EXTD_FORMAT).load(inputFileLocation);
-          break;
-        case S3_BQ_PRQT_FORMAT:
-          inputData = spark.read().parquet(inputFileLocation);
-          break;
-        case S3_BQ_JSON_FORMAT:
-          inputData =
-              spark
-                  .read()
-                  .format(S3_BQ_JSON_FORMAT)
-                  .option(S3_BQ_INFER_SCHEMA, true)
-                  .load(inputFileLocation);
-          break;
-        default:
-          throw new IllegalArgumentException(
-              "Currenlty avro, parquet, json and csv are the only supported formats");
-      }
-
-      inputData
-          .write()
-          .format(S3_BQ_OUTPUT_FORMAT)
-          .option(S3_BQ_HEADER, true)
-          .option(S3_BQ_OUTPUT, bigQueryDataset + "." + bigQueryTable)
-          .option(S3_BQ_TEMP_BUCKET, bqTempBucket)
-          .mode(SaveMode.Append)
-          .save();
-
-    } catch (Throwable th) {
-      LOGGER.error("Exception in S3toBigquery", th);
-      if (Objects.nonNull(spark)) {
-        spark.stop();
-      }
-    }
   }
 }

@@ -20,8 +20,11 @@ from pyspark.sql import SparkSession
 
 from dataproc_templates import BaseTemplate, TemplateName
 from dataproc_templates.gcs.gcs_to_jdbc import GCSToJDBCTemplate
-from dataproc_templates.util import get_template_name, track_template_invocation
+from dataproc_templates.mongo.mongo_to_gcs import MongoToGCSTemplate
+from dataproc_templates.util import get_template_name, get_log_level, track_template_invocation
 from dataproc_templates.gcs.gcs_to_bigquery import GCSToBigQueryTemplate
+from dataproc_templates.gcs.gcs_to_gcs import GCSToGCSTemplate
+from dataproc_templates.gcs.gcs_to_mongo import GCSToMONGOTemplate
 from dataproc_templates.gcs.gcs_to_bigtable import GCSToBigTableTemplate
 from dataproc_templates.bigquery.bigquery_to_gcs import BigQueryToGCSTemplate
 from dataproc_templates.hive.hive_to_bigquery import HiveToBigQueryTemplate
@@ -29,25 +32,50 @@ from dataproc_templates.hive.hive_to_gcs import HiveToGCSTemplate
 from dataproc_templates.gcs.text_to_bigquery import TextToBigQueryTemplate
 from dataproc_templates.hbase.hbase_to_gcs import HbaseToGCSTemplate
 from dataproc_templates.jdbc.jdbc_to_jdbc import JDBCToJDBCTemplate
-
+from dataproc_templates.jdbc.jdbc_to_gcs import JDBCToGCSTemplate
+from dataproc_templates.jdbc.jdbc_to_bigquery import JDBCToBigQueryTemplate
+from dataproc_templates.snowflake.snowflake_to_gcs import SnowflakeToGCSTemplate
+from dataproc_templates.redshift.redshift_to_gcs import RedshiftToGCSTemplate
+from dataproc_templates.cassandra.cassandra_to_bigquery import CassandraToBQTemplate
+from dataproc_templates.hive.util.hive_ddl_extractor import HiveDDLExtractorTemplate
+from dataproc_templates.kafka.kafka_to_gcs import KafkaToGCSTemplate
+from dataproc_templates.kafka.kafka_to_bq import KafkaToBigQueryTemplate
+from dataproc_templates.s3.s3_to_bigquery import S3ToBigQueryTemplate
+from dataproc_templates.cassandra.cassandra_to_gcs import CassandraToGCSTemplate
+from dataproc_templates.pubsublite.pubsublite_to_gcs import PubSubLiteToGCSTemplate
+from dataproc_templates.azure.azure_blob_storage_to_bigquery import AzureBlobStorageToBigQueryTemplate
 
 LOGGER: logging.Logger = logging.getLogger('dataproc_templates')
-
 
 # Maps each TemplateName to its corresponding implementation
 # of BaseTemplate
 TEMPLATE_IMPLS: Dict[TemplateName, Type[BaseTemplate]] = {
     TemplateName.GCSTOBIGQUERY: GCSToBigQueryTemplate,
+    TemplateName.GCSTOGCS: GCSToGCSTemplate,
     TemplateName.GCSTOBIGTABLE: GCSToBigTableTemplate,
     TemplateName.BIGQUERYTOGCS: BigQueryToGCSTemplate,
     TemplateName.HIVETOBIGQUERY: HiveToBigQueryTemplate,
     TemplateName.HIVETOGCS: HiveToGCSTemplate,
     TemplateName.TEXTTOBIGQUERY: TextToBigQueryTemplate,
     TemplateName.GCSTOJDBC: GCSToJDBCTemplate,
+    TemplateName.GCSTOMONGO: GCSToMONGOTemplate,
     TemplateName.HBASETOGCS: HbaseToGCSTemplate,
-    TemplateName.JDBCTOJDBC: JDBCToJDBCTemplate
-}
+    TemplateName.JDBCTOJDBC: JDBCToJDBCTemplate,
+    TemplateName.JDBCTOGCS: JDBCToGCSTemplate,
+    TemplateName.JDBCTOBIGQUERY: JDBCToBigQueryTemplate,
+    TemplateName.MONGOTOGCS: MongoToGCSTemplate,
+    TemplateName.SNOWFLAKETOGCS: SnowflakeToGCSTemplate,
+    TemplateName.REDSHIFTTOGCS: RedshiftToGCSTemplate,
+    TemplateName.CASSANDRATOBQ: CassandraToBQTemplate,
+    TemplateName.AZUREBLOBSTORAGETOBQ: AzureBlobStorageToBigQueryTemplate,
+    TemplateName.CASSANDRATOGCS: CassandraToGCSTemplate,
+    TemplateName.HIVEDDLEXTRACTOR: HiveDDLExtractorTemplate,
+    TemplateName.KAFKATOGCS: KafkaToGCSTemplate,
+    TemplateName.KAFKATOBQ: KafkaToBigQueryTemplate,
+    TemplateName.S3TOBIGQUERY: S3ToBigQueryTemplate,
+    TemplateName.PUBSUBLITETOGCS: PubSubLiteToGCSTemplate
 
+}
 
 def create_spark_session(template_name: TemplateName) -> SparkSession:
     """
@@ -68,10 +96,15 @@ def create_spark_session(template_name: TemplateName) -> SparkSession:
         .appName(template_name.value) \
         .enableHiveSupport() \
         .getOrCreate()
-    spark.sparkContext.setLogLevel("INFO")
+
+    log4j = spark.sparkContext._jvm.org.apache.log4j
+    log4j_level: log4j.Level = log4j.Level.toLevel(get_log_level())
+
+    log4j.LogManager.getRootLogger().setLevel(log4j_level)
+    log4j.LogManager.getLogger("org.apache.spark").setLevel(log4j_level)
+    spark.sparkContext.setLogLevel(get_log_level())
 
     return spark
-
 
 def run_template(template_name: TemplateName) -> None:
     """
@@ -89,8 +122,6 @@ def run_template(template_name: TemplateName) -> None:
 
     template_impl: Type[BaseTemplate] = TEMPLATE_IMPLS[template_name]
 
-    LOGGER.info('Running template %s', template_name.value)
-
     template_instance: BaseTemplate = template_impl.build()
 
     try:
@@ -98,7 +129,7 @@ def run_template(template_name: TemplateName) -> None:
 
         spark: SparkSession = create_spark_session(template_name=template_name)
 
-        track_template_invocation(template_name=template_name)
+        track_template_invocation(spark=spark, template_name=template_name)
 
         template_instance.run(spark=spark, args=args)
     except Exception:
@@ -110,7 +141,6 @@ def run_template(template_name: TemplateName) -> None:
 
 
 if __name__ == '__main__':
-    LOGGER.setLevel(logging.INFO)
 
     run_template(
         template_name=get_template_name()
